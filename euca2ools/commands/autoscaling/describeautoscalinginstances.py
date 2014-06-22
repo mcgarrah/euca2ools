@@ -35,8 +35,7 @@ class DescribeAutoScalingInstances(AutoScalingRequest, TabifyingMixin):
     ARGS = [Arg('InstanceIds.member', metavar='INSTANCE', nargs='*',
                 help='limit results to specific instances'),
             Arg('--show-long', action='store_true', route_to=None,
-                help=argparse.SUPPRESS)]  # doesn't actually do anything, but
-                                          # people will use it out of habit
+                help=argparse.SUPPRESS)]  # Often typed out of habit
     LIST_TAGS = ['AutoScalingInstances']
 
     def main(self):
@@ -51,11 +50,10 @@ class DescribeAutoScalingInstances(AutoScalingRequest, TabifyingMixin):
 
     def print_result(self, result):
         for instance in result.get('AutoScalingInstances', []):
-            bits = ['INSTANCE']
-            bits.append(instance.get('InstanceId'))
-            bits.append(instance.get('AutoScalingGroupName'))
-            bits.append(instance.get('AvailabilityZone'))
-            bits.append(instance.get('LifecycleState'))
-            bits.append(instance.get('HealthStatus'))
-            bits.append(instance.get('LaunchConfigurationName'))
-            print self.tabify(bits)
+            print self.tabify(('INSTANCE',
+                               instance.get('InstanceId'),
+                               instance.get('AutoScalingGroupName'),
+                               instance.get('AvailabilityZone'),
+                               instance.get('LifecycleState'),
+                               instance.get('HealthStatus'),
+                               instance.get('LaunchConfigurationName')))

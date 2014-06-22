@@ -1,4 +1,4 @@
-# Copyright 2009-2013 Eucalyptus Systems, Inc.
+# Copyright 2009-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -29,10 +29,19 @@ from distutils.command.install_scripts import install_scripts
 from distutils.command.sdist import sdist
 import glob
 import os.path
-import re
+import sys
+
 from setuptools import find_packages, setup
 
 from euca2ools import __version__
+
+
+REQUIREMENTS = ['lxml',
+                'requestbuilder>=0.2.0-pre3',
+                'requests',
+                'six>=1.4']
+if sys.version_info < (2, 7):
+    REQUIREMENTS.append('argparse')
 
 
 # Cheap hack:  install symlinks separately from regular files.
@@ -57,8 +66,9 @@ class install_scripts_and_symlinks(install_scripts):
         # Replicate symlinks if they don't exist
         for script in self.distribution.scripts:
             if os.path.islink(script):
-                target  = os.readlink(script)
-                newlink = os.path.join(self.install_dir, os.path.basename(script))
+                target = os.readlink(script)
+                newlink = os.path.join(self.install_dir,
+                                       os.path.basename(script))
                 if not os.path.exists(newlink):
                     os.symlink(target, newlink)
 
@@ -115,17 +125,14 @@ setup(name="euca2ools",
       url="http://www.eucalyptus.com",
       scripts=sum((glob.glob('bin/euare-*'),
                    glob.glob('bin/euca-*'),
+                   glob.glob('bin/euform-*'),
                    glob.glob('bin/eulb-*'),
                    glob.glob('bin/euscale-*'),
-                   glob.glob('bin/eustore-*'),
                    glob.glob('bin/euwatch-*')),
                   []),
       data_files=[('share/man/man1', glob.glob('man/*.1'))],
       packages=find_packages(),
-      install_requires=['lxml',
-                        'requestbuilder',
-                        'requests',
-                        'six'],
+      install_requires=REQUIREMENTS,
       license='BSD (Simplified)',
       platforms='Posix; MacOS X',
       classifiers=['Development Status :: 4 - Beta',

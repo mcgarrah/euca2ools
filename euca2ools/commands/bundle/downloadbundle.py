@@ -1,4 +1,4 @@
-# Copyright 2009-2013 Eucalyptus Systems, Inc.
+# Copyright 2009-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -23,92 +23,58 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from euca2ools.commands.bundle.helpers import download_files
-from euca2ools.commands.bundle.helpers import get_manifest_keys
-from euca2ools.commands.bundle.helpers import get_manifest_parts
-from euca2ools.commands.walrus import WalrusRequest
-from euca2ools.commands.walrus.checkbucket import CheckBucket
-from euca2ools.exceptions import AWSError
-from euca2ools.util import mkdtemp_for_large_files
-import os
-from requestbuilder import Arg, MutuallyExclusiveArgList
+
+import os.path
+import sys
+
+from requestbuilder import Arg
 from requestbuilder.exceptions import ArgumentError
-import shutil
+from requestbuilder.mixins import FileTransferProgressBarMixin
+
+from euca2ools.commands.bundle.mixins import BundleDownloadingMixin
+from euca2ools.commands.s3 import S3Request
 
 
-class DownloadBundle(WalrusRequest):
+class DownloadBundle(S3Request, FileTransferProgressBarMixin,
+                     BundleDownloadingMixin):
     DESCRIPTION = ('Download a bundled image from the cloud\n\nYou must run '
                    'euca-unbundle-image on the bundle you download to obtain '
                    'the original image.')
-    ARGS = [Arg('-b', '--bucket', metavar='BUCKET', required=True,
-                help='bucket to download the bucket from (required)'),
-            MutuallyExclusiveArgList(
-                Arg('-m', '--manifest', dest='manifest_path', metavar='FILE',
-                    help='''use a local manifest file to figure out what to
-                    download'''),
-                Arg('-p', '--prefix', metavar='PREFIX',
-                    help='''download the bundle that begins with a specific
-                    prefix (e.g. "fry" for "fry.manifest.xml")''')),
-            Arg('-d', '--directory', metavar='DIR',
-                help='The directory to download the parts to.')]
+    ARGS = [Arg('-d', '--directory', dest='dest', metavar='DIR', default=".",
+                help='''the directory to download the bundle parts to, or "-"
+                to write the bundled image to stdout''')]
 
-    def _download_parts(self, manifests, directory):
-        bucket = self.args.get('bucket')
-        for manifest in manifests:
-            parts = get_manifest_parts(os.path.join(directory, manifest))
-            download_files(bucket, parts, directory, service=self.service,
-                           config=self.config,
-                           show_progress=self.args.get('show_progress', True))
-
-    def _download_by_local_manifest(self, directory):
-        manifest_path = self.args.get('manifest_path')
-        if not os.path.isfile(manifest_path):
-            raise ArgumentError(
-                "manifest file '{0}' does not exist.".format(manifest_path))
-        manifest_key = os.path.basename(manifest_path)
-        if not os.path.exists(os.path.join(directory, manifest_key)):
-            shutil.copy(manifest_path, directory)
-        self._download_parts([manifest_key], directory)
-
-    def _download_by_prefix(self, directory):
-        bucket = self.args.get('bucket')
-        prefix = self.args.get('prefix')
-        manifest_keys = get_manifest_keys(bucket, prefix, service=self.service,
-                                          config=self.config)
-        if not manifest_keys:
-            if prefix:
+    # noinspection PyExceptionInherit
+    def configure(self):
+        S3Request.configure(self)
+        if self.args['dest'] == '-':
+            self.args['dest'] = sys.stdout
+            self.args['show_progress'] = False
+        elif isinstance(self.args['dest'], basestring):
+            if not os.path.exists(self.args['dest']):
                 raise ArgumentError(
-                    "no manifests found with prefix '{0}' in bucket '{1}'."
-                    .format(prefix, bucket))
-            else:
-                raise ArgumentError("no manifests found in bucket '{0}'."
-                                    .format(bucket))
-        try:
-            download_files(bucket, manifest_keys, directory,
-                           service=self.service, config=self.config,
-                           show_progress=self.args.get('show_progress', True))
-        except AWSError as err:
-            if err.code != 'NoSuchEntity':
-                raise
-            raise ArgumentError(
-                "cannot find manifest file(s) {0} in bucket '{1}'."
-                .format(",".join(manifest_keys), bucket))
-        self._download_parts(manifest_keys, directory)
+                    "argument -d/--directory: '{0}' does not exist"
+                    .format(self.args['dest']))
+            if not os.path.isdir(self.args['dest']):
+                raise ArgumentError(
+                    "argument -d/--directory: '{0}' is not a directory"
+                    .format(self.args['dest']))
+        # Otherwise we assume it is a file object
 
+    # noinspection PyExceptionInherit
     def main(self):
-        bucket = self.args.get('bucket').split('/', 1)[0]
-        CheckBucket(bucket=bucket, service=self.service,
-                    config=self.config).main()
-
-        directory = self.args.get('directory') or mkdtemp_for_large_files()
-        if not os.path.isdir(directory):
-            raise ArgumentError(
-                "location '{0}' is either not a directory or does not exist."
-                .format(directory))
-
-        if self.args.get('manifest_path'):
-            self._download_by_local_manifest(directory)
+        manifest = self.fetch_manifest(self.service)
+        if isinstance(self.args['dest'], basestring):
+            manifest_dest = self.download_bundle_to_dir(
+                manifest, self.args['dest'], self.service)
         else:
-            self._download_by_prefix(directory)
+            manifest_dest = self.download_bundle_to_fileobj(
+                manifest, self.args['dest'], self.service)
+        return manifest, manifest_dest
 
-        print "Bundle downloaded to '{0}'".format(directory)
+    def print_result(self, result):
+        _, manifest_filename = result
+        if (manifest_filename and
+            (isinstance(self.args['dest'], basestring) or
+             self.args['dest'].fileno() != sys.stdout.fileno())):
+            print 'Wrote manifest', manifest_filename

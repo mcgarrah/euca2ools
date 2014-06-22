@@ -1,4 +1,4 @@
-# Copyright 2013 Eucalyptus Systems, Inc.
+# Copyright 2013-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -43,13 +43,14 @@ def listener(listener_str):
                        'instance-protocol', 'cert-id')))
     if len(extra_keys) > 0:
         raise argparse.ArgumentTypeError(
-            "listener '{0}': invalid element(s): {1}".format(listener_str,
+            "listener '{0}': invalid element(s): {1}".format(
+                listener_str,
                 ', '.join("'{0}'".format(key) for key in extra_keys)))
 
     listener_dict = {}
     if 'protocol' in pairs:
-        if pairs['protocol'] in ('HTTP', 'HTTPS', 'SSL', 'TCP'):
-            listener_dict['Protocol'] = pairs['protocol']
+        if pairs['protocol'].upper() in ('HTTP', 'HTTPS', 'SSL', 'TCP'):
+            listener_dict['Protocol'] = pairs['protocol'].upper()
         else:
             raise argparse.ArgumentTypeError(
                 "listener '{0}': protocol '{1}' is invalid (choose from "
@@ -79,14 +80,14 @@ def listener(listener_str):
         raise argparse.ArgumentTypeError(
             "listener '{0}': instance-port is required".format(listener_str))
     if 'instance-protocol' in pairs:
-        if pairs['instance-protocol'] in ('HTTP', 'HTTPS'):
-            if pairs['protocol'] not in ('HTTP', 'HTTPS'):
+        if pairs['instance-protocol'].upper() in ('HTTP', 'HTTPS'):
+            if pairs['protocol'].upper() not in ('HTTP', 'HTTPS'):
                 raise argparse.ArgumentTypeError(
                     "listener '{0}': instance-protocol must be 'HTTP' or "
                     "'HTTPS' when protocol is 'HTTP' or 'HTTPS'"
                     .format(listener_str))
-        elif pairs['instance-protocol'] in ('SSL', 'TCP'):
-            if pairs['protocol'] not in ('SSL', 'TCP'):
+        elif pairs['instance-protocol'].upper() in ('SSL', 'TCP'):
+            if pairs['protocol'].upper() not in ('SSL', 'TCP'):
                 raise argparse.ArgumentTypeError(
                     "listener '{0}': instance-protocol must be 'SSL' or "
                     "'TCP' when protocol is 'SSL' or 'TCP'"
@@ -96,7 +97,7 @@ def listener(listener_str):
                 "listener '{0}': instance-protocol '{1}' is invalid (choose "
                 "from 'HTTP', 'HTTPS', 'SSL', 'TCP')"
                 .format(listener_str, pairs['instance-protocol']))
-        listener_dict['InstanceProtocol'] = pairs['instance-protocol']
+        listener_dict['InstanceProtocol'] = pairs['instance-protocol'].upper()
     if 'cert-id' in pairs:
         listener_dict['SSLCertificateId'] = pairs['cert-id']
     return listener_dict

@@ -1,4 +1,4 @@
-# Copyright 2013 Eucalyptus Systems, Inc.
+# Copyright 2013-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -23,29 +23,33 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from euca2ools.commands import Euca2ools
-from euca2ools.exceptions import AWSError
-from requestbuilder import Arg, MutuallyExclusiveArgList, SERVICE
+import os
+import sys
+
+from requestbuilder import Arg
 import requestbuilder.auth
 from requestbuilder.mixins import TabifyingMixin
-import requestbuilder.service
 from requestbuilder.request import AWSQueryRequest
+import requestbuilder.service
+
+from euca2ools.commands import Euca2ools
+from euca2ools.exceptions import AWSError
+from euca2ools.util import strip_response_metadata, substitute_euca_region
 
 
 class CloudWatch(requestbuilder.service.BaseService):
     NAME = 'monitoring'
     DESCRIPTION = 'Instance monitoring service'
     API_VERSION = '2010-08-01'
-    AUTH_CLASS = requestbuilder.auth.QuerySigV2Auth
-    REGION_ENVVAR = 'EUCA_REGION'
+    REGION_ENVVAR = 'AWS_DEFAULT_REGION'
     URL_ENVVAR = 'AWS_CLOUDWATCH_URL'
 
-    ARGS = [MutuallyExclusiveArgList(
-                Arg('--region', dest='userregion', metavar='USER@REGION',
-                    help='''name of the region and/or user in config files to
-                    use to connect to the service'''),
-                Arg('-U', '--url', metavar='URL',
-                    help='instance monitoring service endpoint URL'))]
+    ARGS = [Arg('-U', '--url', metavar='URL',
+                help='instance monitoring service endpoint URL')]
+
+    def configure(self):
+        substitute_euca_region(self)
+        requestbuilder.service.BaseService.configure(self)
 
     def handle_http_error(self, response):
         raise AWSError(response)
@@ -54,16 +58,12 @@ class CloudWatch(requestbuilder.service.BaseService):
 class CloudWatchRequest(AWSQueryRequest, TabifyingMixin):
     SUITE = Euca2ools
     SERVICE_CLASS = CloudWatch
+    AUTH_CLASS = requestbuilder.auth.QuerySigV2Auth
     METHOD = 'POST'
 
     def parse_response(self, response):
         response_dict = AWSQueryRequest.parse_response(self, response)
-        useful_keys = list(filter(lambda x: x != 'ResponseMetadata',
-                                  response_dict.keys()))
-        if len(useful_keys) == 1:
-            return response_dict[useful_keys[0]] or {}
-        else:
-            return response_dict
+        return strip_response_metadata(response_dict)
 
     def print_alarm(self, alarm):
         bits = [alarm.get('AlarmName')]
@@ -96,4 +96,6 @@ class CloudWatchRequest(AWSQueryRequest, TabifyingMixin):
         bits.append(alarm.get('EvaluationPeriods'))
         bits.append(alarm.get('ComparisonOperator'))
         bits.append(alarm.get('Threshold'))
+        if self.args['show_long']:
+            bits.append(alarm.get('AlarmArn'))
         print self.tabify(bits)

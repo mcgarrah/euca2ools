@@ -1,4 +1,4 @@
-# Copyright 2009-2013 Eucalyptus Systems, Inc.
+# Copyright 2009-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -26,19 +26,25 @@
 import os.path
 import subprocess
 
-__version__ = '3.0.0'
+
+__version__ = '3.1.0'
+
+BUFSIZE = 8192
+
 
 if '__file__' in globals():
     # Check if this is a git repo; maybe we can get more precise version info
     try:
-        repo_path = os.path.join(os.path.dirname(__file__), '..')
-        git = subprocess.Popen(['git', 'describe'], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE,
-                               env={'GIT_DIR': os.path.join(repo_path, '.git')})
-        git.wait()
-        git.stderr.read()
-        if git.returncode == 0:
-            __version__ = git.stdout.read().strip()
+        REPO_PATH = os.path.join(os.path.dirname(__file__), '..')
+        # noinspection PyUnresolvedReferences
+        GIT = subprocess.Popen(
+            ['git', 'describe'], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={'GIT_DIR': os.path.join(REPO_PATH, '.git')})
+        GIT.wait()
+        GIT.stderr.read()
+        if GIT.returncode == 0:
+            __version__ = GIT.stdout.read().strip().lstrip('v')
             if type(__version__).__name__ == 'bytes':
                 __version__ = __version__.decode()
     except:

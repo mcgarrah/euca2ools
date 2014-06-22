@@ -1,4 +1,4 @@
-# Copyright 2013 Eucalyptus Systems, Inc.
+# Copyright 2013-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -52,16 +52,25 @@ class ConfigureHealthCheck(ELBRequest, TabifyingMixin):
                 help='''number of consecutive failed health checks that will
                 mark instances as Unhealthy (required)''')]
 
+    # noinspection PyExceptionInherit
     def configure(self):
         ELBRequest.configure(self)
         target = self.args['HealthCheck.Target']
-        protocol, __, rest = target.partition(':')
+        protocol, _, rest = target.partition(':')
         if not rest:
             raise ArgumentError('argument -t/--target: must have form '
                                 'PROTOCOL:PORT[/PATH]')
         if protocol.lower() in ('http', 'https') and '/' not in rest:
             raise ArgumentError('argument -t/--target: path is required for '
                                 "protocol '{0}'".format(protocol))
+
+    def preprocess(self):
+        # Be nice and auto-capitalize known protocols for people
+        target = self.args['HealthCheck.Target']
+        protocol = target.split(':', 1)[0]
+        if protocol.lower() in ('http', 'https', 'ssl', 'tcp'):
+            self.params['HealthCheck.Target'] = target.replace(
+                protocol, protocol.upper(), 1)
 
     def print_result(self, result):
         check = result.get('HealthCheck', {})

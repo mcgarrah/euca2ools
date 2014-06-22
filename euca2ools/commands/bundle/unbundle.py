@@ -1,4 +1,4 @@
-# Copyright 2009-2013 Eucalyptus Systems, Inc.
+# Copyright 2009-2014 Eucalyptus Systems, Inc.
 #
 # Redistribution and use of this software in source and binary forms,
 # with or without modification, are permitted provided that the following
@@ -23,42 +23,49 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from euca2ools.commands import Euca2ools
-from euca2ools.commands.bundle.bundle import Bundle
-import os.path
+import hashlib
+import os
+import multiprocessing
+
 from requestbuilder import Arg
 from requestbuilder.command import BaseCommand
 from requestbuilder.exceptions import ArgumentError
-from requestbuilder.mixins import FileTransferProgressBarMixin
-from requestbuilder.util import set_userregion
+from requestbuilder.mixins import (FileTransferProgressBarMixin,
+                                   RegionConfigurableMixin)
+
+from euca2ools.commands import Euca2ools
+import euca2ools.bundle.pipes
+from euca2ools.bundle.manifest import BundleManifest
+from euca2ools.bundle.util import (close_all_fds, open_pipe_fileobjs,
+                                   waitpid_in_thread)
+from euca2ools.commands.bundle.unbundlestream import UnbundleStream
 
 
-class Unbundle(BaseCommand, FileTransferProgressBarMixin):
+class Unbundle(BaseCommand, FileTransferProgressBarMixin,
+               RegionConfigurableMixin):
     DESCRIPTION = ('Recreate an image from its bundled parts\n\nThe key used '
-                   'to unbundle the image must match the certificate that was '
+                   'to unbundle the image must match a certificate that was '
                    'used to bundle it.')
     SUITE = Euca2ools
-    ARGS = [Arg('-m', '--manifest', metavar='FILE', required=True,
-                help="the bundle's manifest file (required)"),
-            Arg('-k', '--privatekey', metavar='FILE',
-                help='''file containing the private key to decrypt the bundle
-                with.  This must match the certificate used when bundling the
-                image.'''),
-            Arg('-d', '--destination', metavar='DIR', default='.',
-                help='''where to place the unbundled image (default: current
-                directory)'''),
+    ARGS = [Arg('-m', '--manifest', type=open, metavar='FILE',
+                required=True, help="the bundle's manifest file (required)"),
             Arg('-s', '--source', metavar='DIR', default='.',
                 help='''directory containing the bundled image parts (default:
                 current directory)'''),
-            Arg('--region', dest='userregion', metavar='USER@REGION',
-                help='''use encryption keys specified for a user and/or region
-                in configuration files''')]
+            Arg('-d', '--destination', metavar='DIR', default='.',
+                help='''where to place the unbundled image (default: current
+                directory)'''),
+            Arg('-k', '--privatekey', metavar='FILE', help='''file containing
+                the private key to decrypt the bundle with.  This must match
+                a certificate used when bundling the image.''')]
 
+    # noinspection PyExceptionInherit
     def configure(self):
         BaseCommand.configure(self)
-        set_userregion(self.config, self.args.get('userregion'))
-        set_userregion(self.config, os.getenv('EUCA_REGION'))
+        self.update_config_view()
 
+        # The private key could be the user's or the cloud's.  In the config
+        # this is a user-level option.
         if not self.args.get('privatekey'):
             config_privatekey = self.config.get_user_option('private-key')
             if self.args.get('userregion'):
@@ -78,14 +85,82 @@ class Unbundle(BaseCommand, FileTransferProgressBarMixin):
         if not os.path.isfile(self.args['privatekey']):
             raise ArgumentError("private key file '{0}' is not a file"
                                 .format(self.args['privatekey']))
+        self.log.debug('private key: %s', self.args['privatekey'])
+
+        if not os.path.exists(self.args.get('source', '.')):
+            raise ArgumentError("argument -s/--source: directory '{0}' does "
+                                "not exist".format(self.args['source']))
+        if not os.path.isdir(self.args.get('source', '.')):
+            raise ArgumentError("argument -s/--source: '{0}' is not a "
+                                "directory".format(self.args['source']))
+        if not os.path.exists(self.args.get('destination', '.')):
+            raise ArgumentError("argument -d/--destination: directory '{0}' "
+                                "does not exist"
+                                .format(self.args['destination']))
+        if not os.path.isdir(self.args.get('destination', '.')):
+            raise ArgumentError("argument -d/--destination: '{0}' is not a "
+                                "directory".format(self.args['destination']))
+
+    def __read_bundle_parts(self, manifest, outfile):
+        close_all_fds(except_fds=[outfile])
+        for part in manifest.image_parts:
+            self.log.debug("opening part '%s' for reading", part.filename)
+            digest = hashlib.sha1()
+            with open(part.filename) as part_file:
+                while True:
+                    chunk = part_file.read(euca2ools.BUFSIZE)
+                    if chunk:
+                        digest.update(chunk)
+                        outfile.write(chunk)
+                        outfile.flush()
+                    else:
+                        break
+                actual_hexdigest = digest.hexdigest()
+                if actual_hexdigest != part.hexdigest:
+                    self.log.error('rejecting unbundle due to part SHA1 '
+                                   'mismatch (expected: %s, actual: %s)',
+                                   part.hexdigest, actual_hexdigest)
+                    raise RuntimeError(
+                        "bundle part '{0}' appears to be corrupt (expected "
+                        "SHA1: {1}, actual: {2}"
+                        .format(part.filename, part.hexdigest,
+                                actual_hexdigest))
 
     def main(self):
-        bundle = Bundle.create_from_manifest(
-            self.args['manifest'], partdir=self.args['source'],
-            privkey_filename=self.args['privatekey'])
-        pbar = self.get_progressbar(maxval=bundle.bundled_size)
-        return bundle.extract_image(self.args['destination'],
-                                    progressbar=pbar)
+        manifest = BundleManifest.read_from_fileobj(
+            self.args['manifest'], privkey_filename=self.args['privatekey'])
 
-    def print_result(self, result):
-        print 'Wrote', result
+        for part in manifest.image_parts:
+            part_path = os.path.join(self.args['source'], part.filename)
+            while part_path.startswith('./'):
+                part_path = part_path[2:]
+            if os.path.exists(part_path):
+                part.filename = part_path
+            else:
+                raise RuntimeError(
+                    "bundle part '{0}' does not exist; you may need to use "
+                    "-s to specify where to find the bundle's parts"
+                    .format(part_path))
+
+        part_reader_out_r, part_reader_out_w = open_pipe_fileobjs()
+        part_reader = multiprocessing.Process(
+            target=self.__read_bundle_parts,
+            args=(manifest, part_reader_out_w))
+        part_reader.start()
+        part_reader_out_w.close()
+        waitpid_in_thread(part_reader.pid)
+
+        image_filename = os.path.join(self.args['destination'],
+                                      manifest.image_name)
+        with open(image_filename, 'w') as image:
+            unbundlestream = UnbundleStream.from_other(
+                self, source=part_reader_out_r, dest=image,
+                enc_key=manifest.enc_key, enc_iv=manifest.enc_iv,
+                image_size=manifest.image_size,
+                sha1_digest=manifest.image_digest,
+                show_progress=self.args.get('show_progress', False))
+            unbundlestream.main()
+        return image_filename
+
+    def print_result(self, image_filename):
+        print 'Wrote', image_filename

@@ -42,9 +42,9 @@ class DescribeLoadBalancers(ELBRequest, TabifyingMixin):
 
     def print_result(self, result):
         for desc in result.get('LoadBalancerDescriptions', []):
-            bits = ['LOAD_BALANCER']
-            bits.append(desc.get('LoadBalancerName'))
-            bits.append(desc.get('DNSName'))
+            bits = ['LOAD_BALANCER',
+                    desc.get('LoadBalancerName'),
+                    desc.get('DNSName')]
             if self.args['show_long']:
                 bits.append(desc.get('CanonicalHostedZoneName'))
                 bits.append(desc.get('CanonicalHostedZoneNameID'))
@@ -86,8 +86,8 @@ class DescribeLoadBalancers(ELBRequest, TabifyingMixin):
                             listener_str_bits.append(name + '=' +
                                                      listener[xmlname])
                     if listenerdesc.get('PolicyNames'):
-                        listener_str_bits.append('{' +
-                            ','.join(listenerdesc['PolicyNames']) + '}')
+                        listener_str_bits.append(
+                            '{' + ','.join(listenerdesc['PolicyNames']) + '}')
                     listeners.append('{' + ','.join(listener_str_bits) + '}')
                 if len(listeners) > 0:
                     bits.append(','.join(listeners))
@@ -110,21 +110,27 @@ class DescribeLoadBalancers(ELBRequest, TabifyingMixin):
                 else:
                     bits.append(None)
 
-                for poltype in ('AppCookieStickinessPolicies',
-                                'LBCookieStickinessPolicies'):
-                    policies = desc.get('Policies', {}).get(poltype)
-                    if policies:
-                        policy_strs = ('{{policy-name={0},cookie-name={1}}}'
-                                       .format(policy['PolicyName'],
-                                               policy['CookieName'])
-                                       for policy in policies)
-                        bits.append(','.join(policy_strs))
-                    else:
-                        bits.append(None)
+                all_policies = desc.get('Policies') or {}
 
-                otherpolicies = desc.get('Policies', {}).get('OtherPolicies')
-                if otherpolicies:
-                    bits.append('{' + ','.join(otherpolicies) + '}')
+                app_policies = all_policies.get(
+                    'AppCookieStickinessPolicies') or {}
+                app_policy_strs = ['{{policy-name={0},cookie-name={1}}}'
+                                   .format(policy.get('PolicyName'),
+                                           policy.get('CookieName'))
+                                   for policy in app_policies]
+                bits.append(','.join(app_policy_strs) or None)
+
+                lb_policies = all_policies.get(
+                    'LBCookieStickinessPolicies') or {}
+                lb_policy_strs = ['{{policy-name={0},expiration-period={1}}}'
+                                  .format(policy.get('PolicyName'),
+                                          policy.get('CookieExpirationPeriod'))
+                                  for policy in lb_policies]
+                bits.append(','.join(lb_policy_strs) or None)
+
+                other_policies = all_policies.get('OtherPolicies') or {}
+                if other_policies:
+                    bits.append('{' + ','.join(other_policies) + '}')
                 else:
                     bits.append(None)
 
